@@ -8,7 +8,13 @@ const {
   NoSubscriberBehavior,
   AudioPlayerStatus
 } = require("@discordjs/voice");
-const { Readable } = require("stream");
+
+// Creamos un frame de silencio nativo (sin FFmpeg)
+class Silence extends require("stream").Readable {
+  _read() {
+    this.push(Buffer.from([0xF8, 0xFF, 0xFE]));
+  }
+}
 
 const client = new Client({
   intents: [
@@ -20,58 +26,60 @@ const client = new Client({
 let connection;
 let player;
 
-// Stream silencioso sin FFmpeg
-function silentStream() {
-  return new Readable({
-    read() {
-      this.push(Buffer.alloc(480)); // Frame vacío
-    }
-  });
+function createSilenceResource() {
+  const silence = new Silence();
+  return createAudioResource(silence, { inlineVolume: false });
 }
 
-function createSilentAudio() {
-  return createAudioResource(silentStream());
-}
-
-async function connectToVoice() {
-  const guildId = process.env.GUILD_ID;
+async function connectToVoiceChannel() {
   const channelId = process.env.VOICE_CHANNEL_ID;
+  const guildId = process.env.GUILD_ID;
 
   try {
     const channel = await client.channels.fetch(channelId);
+
+    console.log(`🎧 Conectando al canal de voz: ${channel.name}`);
 
     connection = joinVoiceChannel({
       channelId,
       guildId,
       adapterCreator: channel.guild.voiceAdapterCreator,
-      selfDeaf: false
+      selfDeaf: false,
     });
 
     player = createAudioPlayer({
-      behaviors: { noSubscriber: NoSubscriberBehavior.Play }
+      behaviors: {
+        noSubscriber: NoSubscriberBehavior.Play,
+      },
     });
 
-    const resource = createSilentAudio();
-    player.play(resource);
+    player.play(createSilenceResource());
     connection.subscribe(player);
 
-    console.log("🔊 Bot conectado al canal y reproduciendo silencio");
-
-    player.on(AudioPlayerStatus.Idle, () => {
-      console.log("🔁 Reiniciando audio silencioso");
-      player.play(createSilentAudio());
+    player.on(AudioPlayerStatus.Playing, () => {
+      console.log("🔊 Reproduciendo silencio para mantener conexión.");
     });
 
-    player.on("error", (e) => console.log("Error en audio:", e));
-
   } catch (err) {
-    console.log("❌ Error conectando al canal:", err);
+    console.error("⚠️ Error al conectar al canal:", err.message);
   }
 }
 
-client.on("ready", () => {
+client.once("ready", () => {
   console.log(`🤖 Bot conectado como ${client.user.tag}`);
-  connectToVoice();
+  connectToVoiceChannel();
+});
+
+client.on("voiceStateUpdate", (oldState, newState) => {
+  if (
+    oldState.member &&
+    oldState.member.id === client.user.id &&
+    oldState.channelId &&
+    !newState.channelId
+  ) {
+    console.log("⚠️ Bot fue desconectado. Reconectando...");
+    setTimeout(connectToVoiceChannel, 3000);
+  }
 });
 
 client.login(process.env.DISCORD_TOKEN);
