@@ -14,26 +14,28 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildVoiceStates
-  ],
+  ]
 });
-
-// AUDIO SILENCIOSO REAL, SIN FFMPEG
-function createSilentResource() {
-  const silentStream = new Readable({
-    read() {
-      this.push(Buffer.alloc(20)); // solo silencio, no requiere FFMPEG
-    }
-  });
-
-  return createAudioResource(silentStream);
-}
 
 let connection;
 let player;
 
+// Stream silencioso sin FFmpeg
+function silentStream() {
+  return new Readable({
+    read() {
+      this.push(Buffer.alloc(480)); // Frame vacío
+    }
+  });
+}
+
+function createSilentAudio() {
+  return createAudioResource(silentStream());
+}
+
 async function connectToVoice() {
-  const channelId = process.env.VOICE_CHANNEL_ID;
   const guildId = process.env.GUILD_ID;
+  const channelId = process.env.VOICE_CHANNEL_ID;
 
   try {
     const channel = await client.channels.fetch(channelId);
@@ -49,33 +51,27 @@ async function connectToVoice() {
       behaviors: { noSubscriber: NoSubscriberBehavior.Play }
     });
 
+    const resource = createSilentAudio();
+    player.play(resource);
     connection.subscribe(player);
 
-    const resource = createSilentResource();
-    player.play(resource);
+    console.log("🔊 Bot conectado al canal y reproduciendo silencio");
 
-    player.on(AudioPlayerStatus.Playing, () => {
-      console.log("🔊 Audio silencioso reproduciéndose.");
+    player.on(AudioPlayerStatus.Idle, () => {
+      console.log("🔁 Reiniciando audio silencioso");
+      player.play(createSilentAudio());
     });
 
-  } catch (e) {
-    console.error("Error conectando:", e);
+    player.on("error", (e) => console.log("Error en audio:", e));
+
+  } catch (err) {
+    console.log("❌ Error conectando al canal:", err);
   }
 }
 
 client.on("ready", () => {
   console.log(`🤖 Bot conectado como ${client.user.tag}`);
   connectToVoice();
-});
-
-client.on("voiceStateUpdate", (o, n) => {
-  if (o.member &&
-      o.member.id === client.user.id &&
-      o.channelId &&
-      !n.channelId) {
-    console.log("🔁 Bot expulsado, reconectando…");
-    setTimeout(connectToVoice, 2000);
-  }
 });
 
 client.login(process.env.DISCORD_TOKEN);
