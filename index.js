@@ -1,4 +1,3 @@
-// Carga variables de entorno (.env en local, en Railway ya las pusimos)
 require("dotenv").config();
 
 const { Client, GatewayIntentBits } = require("discord.js");
@@ -7,96 +6,76 @@ const {
   createAudioPlayer,
   createAudioResource,
   NoSubscriberBehavior,
-  AudioPlayerStatus,
+  AudioPlayerStatus
 } = require("@discordjs/voice");
 const { Readable } = require("stream");
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildVoiceStates, // necesario para canales de voz
+    GatewayIntentBits.GuildVoiceStates
   ],
 });
 
-let connection;
-let player;
-
-// Crea un audio "silencioso" para que el bot no sea expulsado por inactividad
-function createSilentAudioResource() {
+// AUDIO SILENCIOSO REAL, SIN FFMPEG
+function createSilentResource() {
   const silentStream = new Readable({
     read() {
-      const buffer = Buffer.alloc(1920); // frame de silencio
-      this.push(buffer);
-    },
+      this.push(Buffer.alloc(20)); // solo silencio, no requiere FFMPEG
+    }
   });
 
   return createAudioResource(silentStream);
 }
 
-async function connectToVoiceChannel() {
+let connection;
+let player;
+
+async function connectToVoice() {
   const channelId = process.env.VOICE_CHANNEL_ID;
   const guildId = process.env.GUILD_ID;
 
-  if (!channelId || !guildId) {
-    console.error("❌ Falta VOICE_CHANNEL_ID o GUILD_ID en las variables de entorno");
-    return;
-  }
-
   try {
     const channel = await client.channels.fetch(channelId);
-
-    if (!channel || channel.type !== 2) {
-      console.error("❌ El ID de canal no es un canal de voz válido");
-      return;
-    }
-
-    console.log(`🎧 Conectando al canal de voz: ${channel.name}`);
 
     connection = joinVoiceChannel({
       channelId,
       guildId,
       adapterCreator: channel.guild.voiceAdapterCreator,
-      selfDeaf: false,
+      selfDeaf: false
     });
 
     player = createAudioPlayer({
-      behaviors: { noSubscriber: NoSubscriberBehavior.Play },
+      behaviors: { noSubscriber: NoSubscriberBehavior.Play }
     });
 
-    const resource = createSilentAudioResource();
-    player.play(resource);
     connection.subscribe(player);
 
+    const resource = createSilentResource();
+    player.play(resource);
+
     player.on(AudioPlayerStatus.Playing, () => {
-      console.log("✅ Reproduciendo audio silencioso (manteniendo al bot en la sala)");
+      console.log("🔊 Audio silencioso reproduciéndose.");
     });
 
-    player.on("error", (error) => {
-      console.error("⚠️ Error en el reproductor de audio:", error);
-    });
-
-  } catch (err) {
-    console.error("⚠️ Error al conectar al canal de voz:", err);
+  } catch (e) {
+    console.error("Error conectando:", e);
   }
 }
 
-client.once("ready", () => {
+client.on("ready", () => {
   console.log(`🤖 Bot conectado como ${client.user.tag}`);
-  connectToVoiceChannel();
+  connectToVoice();
 });
 
-// Si el bot se desconecta de la sala, lo volvemos a meter
-client.on("voiceStateUpdate", (oldState, newState) => {
-  if (
-    oldState.member &&
-    oldState.member.id === client.user.id &&
-    oldState.channelId &&
-    !newState.channelId
-  ) {
-    console.log("⚠️ El bot salió del canal, intentando reconectar...");
-    setTimeout(connectToVoiceChannel, 3000);
+client.on("voiceStateUpdate", (o, n) => {
+  if (o.member &&
+      o.member.id === client.user.id &&
+      o.channelId &&
+      !n.channelId) {
+    console.log("🔁 Bot expulsado, reconectando…");
+    setTimeout(connectToVoice, 2000);
   }
 });
 
-// Iniciar sesión con el token
 client.login(process.env.DISCORD_TOKEN);
